@@ -1,0 +1,11 @@
+.git
+.github
+.wrangler
+bin
+coverage
+docs
+frontend
+worker
+**/*_test.go
+*.md
+

@@ -1,0 +1,27 @@
+{
+  "name": "@goldenman/domain-check-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir ../dist/worker",
+    "check": "tsc --noEmit",
+    "format": "prettier --check src package.json tsconfig.json ../wrangler.jsonc",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "validate:config": "wrangler deploy --dry-run --outdir ../dist/wrangler-validation"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260718.1",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.7.0",
+    "prettier": "3.9.5",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10",
+    "wrangler": "4.112.0"
+  }
+}

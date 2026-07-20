@@ -1,0 +1,14 @@
+bin/
+coverage/
+dist/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+worker/node_modules/
+.wrangler/
+*.log
+*.sarif
+sbom*.json
+
