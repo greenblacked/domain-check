@@ -1,7 +1,7 @@
 import { Container } from '@cloudflare/containers';
 import { DurableObject } from 'cloudflare:workers';
 
-interface Env {
+export interface Env {
   ASSETS: Fetcher;
   SCANNER: DurableObjectNamespace<ScannerContainer>;
   SECURITY: DurableObjectNamespace<SecurityCoordinator>;
@@ -46,6 +46,13 @@ const RATE_WINDOW_MS = 60_000;
 const CHALLENGE_WINDOW_MS = 10 * 60_000;
 const CHALLENGE_AFTER = 3;
 const ACTIVE_TTL_MS = 2 * 60_000;
+// A Durable Object value is capped at 128 KiB and the whole security blob is
+// rewritten on every reservation, so each counter map is bounded. Entries are
+// normally removed as soon as their window lapses; the cap is only a backstop
+// against a burst of unique clients or targets inside a single window.
+const MAX_TRACKED_ENTRIES = 250;
+const TURNSTILE_TIMEOUT_MS = 5_000;
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const hostnamePattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -85,6 +92,8 @@ export class SecurityCoordinator extends DurableObject<Env> {
     if (request.method === 'POST' && url.pathname === '/release') {
       const body = await request.json<{ scan_id: string }>();
       const state = await this.readState();
+      const changed = this.collect(state, Date.now());
+      if (!(body.scan_id in state.active) && !changed) return Response.json({ released: true });
       delete state.active[body.scan_id];
       await this.ctx.storage.put('security', state);
       return Response.json({ released: true });
@@ -92,12 +101,53 @@ export class SecurityCoordinator extends DurableObject<Env> {
     return Response.json({ error: { code: 'not_found', message: 'route not found' } }, { status: 404 });
   }
 
+  // collect drops everything that can no longer influence a decision: expired
+  // reservations and counters whose fixed window has lapsed. Without it the
+  // counter maps grow once per unique client and target and never shrink, and
+  // the blob eventually exceeds the per-value storage limit, at which point
+  // every reservation fails. Returns whether anything changed.
+  private collect(state: SecurityState, now: number): boolean {
+    let changed = false;
+    for (const [id, expires] of Object.entries(state.active)) {
+      if (expires <= now) {
+        delete state.active[id];
+        changed = true;
+      }
+    }
+    changed = this.sweep(state.clients, now, RATE_WINDOW_MS, 'clients') || changed;
+    changed = this.sweep(state.targets, now, RATE_WINDOW_MS, 'targets') || changed;
+    changed = this.sweep(state.anonymous, now, CHALLENGE_WINDOW_MS, 'anonymous') || changed;
+    return changed;
+  }
+
+  private sweep(counters: Record<string, RateCounter>, now: number, window: number, label: string): boolean {
+    let changed = false;
+    for (const [key, counter] of Object.entries(counters)) {
+      if (now - counter.startedAt >= window) {
+        delete counters[key];
+        changed = true;
+      }
+    }
+    const entries = Object.entries(counters);
+    if (entries.length <= MAX_TRACKED_ENTRIES) return changed;
+    // Over the cap, the entries closest to expiry are the cheapest to lose.
+    // Evicting resets those callers' limits early, so make it observable.
+    entries.sort(([, a], [, b]) => a.startedAt - b.startedAt);
+    const evicted = entries.slice(0, entries.length - MAX_TRACKED_ENTRIES);
+    for (const [key] of evicted) delete counters[key];
+    console.warn(JSON.stringify({ event: 'security_state_evicted', map: label, evicted: evicted.length, retained: MAX_TRACKED_ENTRIES }));
+    return true;
+  }
+
   private async reserve(input: ReserveRequest): Promise<Response> {
     const now = Date.now();
     const state = await this.readState();
-    for (const [id, expires] of Object.entries(state.active)) {
-      if (expires <= now) delete state.active[id];
-    }
+    const collected = this.collect(state, now);
+    // Persist reclaimed space even when the reservation is refused, otherwise
+    // the maps only ever shrink on the success path.
+    const persistCollected = async () => {
+      if (collected) await this.ctx.storage.put('security', state);
+    };
 
     const anonymous = updateCounter(state.anonymous[input.client], now, CHALLENGE_WINDOW_MS, false);
     if (anonymous.count >= CHALLENGE_AFTER && !input.turnstile_verified) {
@@ -108,13 +158,16 @@ export class SecurityCoordinator extends DurableObject<Env> {
 
     const client = updateCounter(state.clients[input.client], now, RATE_WINDOW_MS, false);
     if (client.count >= CLIENT_LIMIT) {
+      await persistCollected();
       return Response.json({ allowed: false, code: 'client_rate_limit', retry_after: retryAfter(client, now, RATE_WINDOW_MS) }, { status: 429 });
     }
     const target = updateCounter(state.targets[input.target], now, RATE_WINDOW_MS, false);
     if (target.count >= TARGET_LIMIT) {
+      await persistCollected();
       return Response.json({ allowed: false, code: 'target_rate_limit', retry_after: retryAfter(target, now, RATE_WINDOW_MS) }, { status: 429 });
     }
     if (Object.keys(state.active).length >= MAX_ACTIVE_SCANS) {
+      await persistCollected();
       return Response.json({ allowed: false, code: 'concurrency_limit', retry_after: 10 }, { status: 429 });
     }
 
@@ -182,13 +235,19 @@ async function parsePublicRequest(request: Request): Promise<PublicScanRequest |
   }
 }
 
-async function clientKey(request: Request): Promise<string> {
-  const raw = request.headers.get('CF-Connecting-IP') ?? 'local-anonymous';
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-  return Array.from(new Uint8Array(digest).slice(0, 16), (value) => value.toString(16).padStart(2, '0')).join('');
+// Rate-limit buckets are keyed by digest so every stored key is a fixed 32
+// characters, which keeps the security blob bounded and avoids persisting
+// client addresses or the hostnames people look up.
+export async function bucketKey(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest).slice(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function verifyTurnstile(token: string | undefined, request: Request, env: Env): Promise<boolean> {
+async function clientKey(request: Request): Promise<string> {
+  return bucketKey(request.headers.get('CF-Connecting-IP') ?? 'local-anonymous');
+}
+
+export async function verifyTurnstile(token: string | undefined, request: Request, env: Env, correlationID: string): Promise<boolean> {
   if (env.TURNSTILE_ENABLED !== 'true') return true;
   if (!token || !env.TURNSTILE_SECRET_KEY) return false;
   const form = new FormData();
@@ -196,10 +255,34 @@ async function verifyTurnstile(token: string | undefined, request: Request, env:
   form.set('response', token);
   const remoteIP = request.headers.get('CF-Connecting-IP');
   if (remoteIP) form.set('remoteip', remoteIP);
-  const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: form });
-  if (!response.ok) return false;
-  const result = await response.json<{ success: boolean; hostname?: string }>();
-  return result.success;
+
+  let response: Response;
+  try {
+    // Without a deadline a stalled siteverify call holds the whole request open.
+    response = await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form, signal: AbortSignal.timeout(TURNSTILE_TIMEOUT_MS) });
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'turnstile_unreachable', correlation_id: correlationID, error: String(error) }));
+    return false;
+  }
+  if (!response.ok) {
+    console.error(JSON.stringify({ event: 'turnstile_http_error', correlation_id: correlationID, status: response.status }));
+    return false;
+  }
+
+  const result = await response.json<{ success: boolean; hostname?: string; 'error-codes'?: string[] }>();
+  if (!result.success) {
+    console.warn(JSON.stringify({ event: 'turnstile_rejected', correlation_id: correlationID, codes: result['error-codes'] ?? [] }));
+    return false;
+  }
+  // A token is only proof of a challenge solved on *this* site. Without this
+  // check a token minted against any other property sharing the secret, or on
+  // an attacker-controlled page using the same sitekey, would be accepted.
+  const expected = new URL(request.url).hostname;
+  if (result.hostname !== undefined && result.hostname !== expected) {
+    console.warn(JSON.stringify({ event: 'turnstile_hostname_mismatch', correlation_id: correlationID, expected, got: result.hostname }));
+    return false;
+  }
+  return true;
 }
 
 function securityStub(env: Env): DurableObjectStub<SecurityCoordinator> {
@@ -241,11 +324,12 @@ async function createScan(request: Request, env: Env, correlationID: string): Pr
 
   const scanID = crypto.randomUUID();
   const client = await clientKey(request);
-  const turnstileVerified = await verifyTurnstile(input.turnstile_token, request, env);
+  const target = await bucketKey(hostname);
+  const turnstileVerified = await verifyTurnstile(input.turnstile_token, request, env, correlationID);
   const reservation = await securityStub(env).fetch('https://security/reserve', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ client, target: hostname, scan_id: scanID, turnstile_verified: turnstileVerified } satisfies ReserveRequest),
+    body: JSON.stringify({ client, target, scan_id: scanID, turnstile_verified: turnstileVerified } satisfies ReserveRequest),
   });
   const decision = await reservation.json<{ allowed: boolean; code?: string; retry_after?: number }>();
   if (!decision.allowed) {

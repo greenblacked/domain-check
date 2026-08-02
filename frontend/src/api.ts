@@ -57,15 +57,30 @@ async function decode(response: Response): Promise<Scan> {
   return body;
 }
 
+const REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Every request carries a deadline. Without one a stalled connection leaves the
+ * promise pending forever, which silently strands the caller's poll loop.
+ */
+async function send(path: string, init: RequestInit): Promise<Scan> {
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch {
+    throw new APIError('network_error', 'The service could not be reached. Check your connection and try again.');
+  }
+  return decode(response);
+}
+
 export async function createScan(hostname: string, turnstileToken?: string): Promise<Scan> {
-  const response = await fetch('/api/v1/scans', {
+  return send('/api/v1/scans', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ hostname, ...(turnstileToken ? { turnstile_token: turnstileToken } : {}) }),
   });
-  return decode(response);
 }
 
 export async function getScan(id: string): Promise<Scan> {
-  return decode(await fetch(`/api/v1/scans/${encodeURIComponent(id)}`, { headers: { accept: 'application/json' } }));
+  return send(`/api/v1/scans/${encodeURIComponent(id)}`, { headers: { accept: 'application/json' } });
 }

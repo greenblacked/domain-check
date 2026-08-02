@@ -43,7 +43,7 @@ The service listens on `http://localhost:8787` by default. The root path redirec
 | `npm run build` | Create a dry-run Worker bundle in `../dist/worker` |
 | `npm run validate:config` | Validate the deployment with a Wrangler dry run |
 
-The unit tests exercise pure hostname and sharding helpers. Workerd-only modules are replaced with test stubs through `vitest.config.ts`.
+Tests run inside the Workers runtime via `@cloudflare/vitest-pool-workers`, so `cloudflare:workers` and `@cloudflare/containers` load for real and `SecurityCoordinator` is exercised against genuine Durable Object storage. `vitest.config.ts` declares the bindings inline rather than reading `wrangler.jsonc`, so the suite never needs the container image; tests that reach the scanner inject their own `SCANNER` stub.
 
 ## Bindings and variables
 
