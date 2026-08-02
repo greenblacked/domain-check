@@ -11,6 +11,10 @@ declare global {
 }
 
 const hostnamePattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const POLL_INTERVAL_MS = 650;
+const MAX_POLL_BACKOFF_MS = 5_000;
+const MAX_POLL_FAILURES = 5;
+const MAX_POLL_DURATION_MS = 120_000;
 
 function App() {
   const [hostname, setHostname] = useState('');
@@ -19,18 +23,37 @@ function App() {
   const [siteKey, setSiteKey] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [pollFailures, setPollFailures] = useState(0);
+  const [pollAbandoned, setPollAbandoned] = useState(false);
+  const pollDeadline = useRef(0);
 
+  // Polling is driven by state rather than by a self-rescheduling timer: a
+  // failed attempt bumps pollFailures, which both re-runs this effect and backs
+  // the next attempt off. Previously a failure only set an error message, so a
+  // single dropped request left the scan spinning forever with no further polls.
   useEffect(() => {
-    if (!scan || (scan.status !== 'queued' && scan.status !== 'running')) return;
-    const timer = window.setTimeout(async () => {
-      try {
-        setScan(await getScan(scan.id));
-      } catch (reason) {
-        setError(messageFor(reason));
-      }
-    }, 650);
+    if (!scan || (scan.status !== 'queued' && scan.status !== 'running') || pollAbandoned) return;
+    if (pollFailures >= MAX_POLL_FAILURES || Date.now() >= pollDeadline.current) {
+      setPollAbandoned(true);
+      setError('The scan did not finish in time. Please run the check again.');
+      return;
+    }
+    const delay = Math.min(POLL_INTERVAL_MS * 2 ** pollFailures, MAX_POLL_BACKOFF_MS);
+    const timer = window.setTimeout(() => {
+      getScan(scan.id).then(
+        (next) => {
+          setPollFailures(0);
+          setError('');
+          setScan(next);
+        },
+        (reason) => {
+          setPollFailures((failures) => failures + 1);
+          setError(messageFor(reason));
+        },
+      );
+    }, delay);
     return () => window.clearTimeout(timer);
-  }, [scan]);
+  }, [scan, pollFailures, pollAbandoned]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -44,6 +67,9 @@ function App() {
     try {
       const created = await createScan(normalized, turnstileToken || undefined);
       setHostname(normalized);
+      setPollFailures(0);
+      setPollAbandoned(false);
+      pollDeadline.current = Date.now() + MAX_POLL_DURATION_MS;
       setScan(created);
       setTurnstileToken('');
       setSiteKey('');
@@ -99,7 +125,7 @@ function App() {
           {error && <div className="error" role="alert"><span aria-hidden="true">!</span><p>{error}</p></div>}
         </section>
 
-        {scan && <ScanResult scan={scan} />}
+        {scan && <ScanResult scan={scan} abandoned={pollAbandoned} />}
 
         <section className="principles" aria-label="How checks stay safe">
           <article><span>01</span><h2>Public targets only</h2><p>Private, reserved, loopback, and link-local addresses are rejected after DNS resolution.</p></article>
@@ -113,8 +139,20 @@ function App() {
   );
 }
 
-function ScanResult({ scan }: { scan: Scan }) {
+function ScanResult({ scan, abandoned }: { scan: Scan; abandoned: boolean }) {
   if (scan.status === 'queued' || scan.status === 'running') {
+    // Once polling has been given up the card must stop claiming to be busy,
+    // otherwise it spins indefinitely and assistive technology keeps announcing
+    // work that is no longer happening.
+    if (abandoned) {
+      return (
+        <section className="result-card" aria-live="polite">
+          <p className="eyebrow">Check stopped</p>
+          <h2>{scan.hostname}</h2>
+          <p>No result came back in time. The scan may still be running—run the check again to pick it up.</p>
+        </section>
+      );
+    }
     return (
       <section className="result-card progress-card" aria-live="polite" aria-busy="true">
         <div className="result-heading"><div><p className="eyebrow">Scan in progress</p><h2>{scan.hostname}</h2></div><span>{scan.progress}%</span></div>

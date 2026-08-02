@@ -1,17 +1,30 @@
-import { fileURLToPath } from 'node:url';
+import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
 import { defineConfig } from 'vitest/config';
 
-// `index.ts` imports workerd-only modules (`cloudflare:workers`, and
-// `@cloudflare/containers` which itself depends on them). The unit tests only
-// exercise pure functions, so those modules are aliased to inert stubs.
+// Tests run inside workerd rather than Node, so `cloudflare:workers` and
+// `@cloudflare/containers` load for real and SecurityCoordinator is exercised
+// against genuine Durable Object storage. Bindings are declared inline instead
+// of read from wrangler.jsonc so the suite never needs the container image:
+// tests that reach the scanner inject their own SCANNER stub.
 export default defineConfig({
-  resolve: {
-    alias: {
-      'cloudflare:workers': fileURLToPath(new URL('./src/test-stubs/cloudflare-workers.ts', import.meta.url)),
-      '@cloudflare/containers': fileURLToPath(new URL('./src/test-stubs/cloudflare-containers.ts', import.meta.url)),
-    },
-  },
-  test: {
-    environment: 'node',
-  },
+  plugins: [
+    cloudflareTest({
+      main: './src/index.ts',
+      miniflare: {
+        compatibilityDate: '2026-07-18',
+        compatibilityFlags: ['nodejs_compat'],
+        durableObjects: {
+          SECURITY: { className: 'SecurityCoordinator' },
+        },
+        bindings: {
+          APP_ENV: 'test',
+          CONTAINER_SHARDS: '1',
+          TURNSTILE_ENABLED: 'false',
+          TURNSTILE_SITE_KEY: 'test-site-key',
+          TURNSTILE_SECRET_KEY: 'test-secret-key',
+          RELEASE_SHA: 'test',
+        },
+      },
+    }),
+  ],
 });

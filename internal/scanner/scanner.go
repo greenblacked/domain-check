@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// maxDialAttempts bounds how many resolved addresses are tried before giving
+// up, so a hostname with a large address set cannot monopolise a scan slot.
+const maxDialAttempts = 4
+
 type LookupResolver interface {
 	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
 }
@@ -23,6 +27,10 @@ type Config struct {
 type Scanner struct {
 	resolver LookupResolver
 	config   Config
+	// dialContext establishes the raw TCP connection. It is a seam for tests
+	// only; the TLS handshake, server name, minimum version, and the fixed
+	// port 443 are never delegated.
+	dialContext func(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 type Report struct {
@@ -62,7 +70,7 @@ func NewResolver(address string) LookupResolver {
 }
 
 func New(resolver LookupResolver, cfg Config) *Scanner {
-	return &Scanner{resolver: resolver, config: cfg}
+	return &Scanner{resolver: resolver, config: cfg, dialContext: (&net.Dialer{}).DialContext}
 }
 
 func (s *Scanner) Scan(parent context.Context, hostname string) (Report, error) {
@@ -96,19 +104,9 @@ func (s *Scanner) Scan(parent context.Context, hostname string) (Report, error) 
 	}
 	sort.Strings(ips)
 
-	var conn *tls.Conn
-	var lastErr error
-	for _, ip := range ips {
-		dialer := &net.Dialer{Timeout: s.config.Timeout / 2}
-		conn, lastErr = tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(ip, "443"), &tls.Config{
-			ServerName: host, MinVersion: tls.VersionTLS12, InsecureSkipVerify: s.config.TLSInsecureForTests && testHost, // #nosec G402 -- locked to an explicit APP_ENV=test allowlist.
-		})
-		if lastErr == nil {
-			break
-		}
-	}
-	if conn == nil {
-		return Report{}, fmt.Errorf("TLS connection failed: %w", lastErr)
+	conn, err := s.dial(ctx, host, ips, testHost)
+	if err != nil {
+		return Report{}, err
 	}
 	defer conn.Close()
 	state := conn.ConnectionState()
@@ -122,6 +120,48 @@ func (s *Scanner) Scan(parent context.Context, hostname string) (Report, error) 
 	}
 	report.Findings = findings(report.TLS, s.config.TLSInsecureForTests && testHost)
 	return report, nil
+}
+
+// dial connects to the first reachable candidate address on port 443. Every
+// attempt is bound by ctx, so the total time spent dialing can never exceed the
+// caller's scan budget no matter how many addresses the hostname resolves to.
+func (s *Scanner) dial(ctx context.Context, host string, ips []string, testHost bool) (*tls.Conn, error) {
+	var lastErr error
+	for _, ip := range ips[:min(len(ips), maxDialAttempts)] {
+		if ctx.Err() != nil {
+			break
+		}
+		conn, err := s.handshake(ctx, host, ip, testHost)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = ctx.Err()
+	}
+	return nil, fmt.Errorf("TLS connection failed: %w", lastErr)
+}
+
+// handshake dials one candidate address and completes TLS against it. Both the
+// dial and the handshake share a single per-attempt deadline derived from ctx.
+func (s *Scanner) handshake(ctx context.Context, host, ip string, testHost bool) (*tls.Conn, error) {
+	attempt, cancel := context.WithTimeout(ctx, s.config.Timeout/2)
+	// Cancelling after a completed handshake releases the timer without
+	// affecting the established connection.
+	defer cancel()
+	raw, err := s.dialContext(attempt, "tcp", net.JoinHostPort(ip, "443"))
+	if err != nil {
+		return nil, err
+	}
+	conn := tls.Client(raw, &tls.Config{
+		ServerName: host, MinVersion: tls.VersionTLS12, InsecureSkipVerify: s.config.TLSInsecureForTests && testHost, // #nosec G402 -- locked to an explicit APP_ENV=test allowlist.
+	})
+	if err := conn.HandshakeContext(attempt); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return conn, nil
 }
 
 func certificateReport(state tls.ConnectionState, cert *x509.Certificate) TLSReport {
