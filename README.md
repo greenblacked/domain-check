@@ -16,21 +16,25 @@ Cloudflare Worker
         `-- Go scanner container (DNS lookup and TLS handshake)
 ```
 
-- `frontend/` contains the React and Vite interface.
-- `worker/` contains the public API, static asset handling, rate limiting, and container orchestration.
-- `cmd/domain-check/` starts the Go HTTP service used by the container.
-- `internal/api/` implements the container's private scan API.
-- `internal/scanner/` validates targets and gathers DNS, certificate, and TLS evidence.
-- `wrangler.jsonc` and `Dockerfile` define the Cloudflare deployment.
+| Path | Contents |
+| --- | --- |
+| `frontend/` | React and Vite interface |
+| `worker/` | Public API, static assets, abuse controls, container orchestration |
+| `cmd/domain-check/` | Entry point for the Go container |
+| `internal/api/` | The container's private scan API |
+| `internal/scanner/` | Target validation and DNS, certificate, and TLS evidence |
+| `wrangler.jsonc`, `Dockerfile` | Cloudflare deployment |
+
+Each layer re-validates its own input. The frontend rejects malformed hostnames before sending, the Worker normalizes and validates again, and the container refuses anything that is not already normalized. Keep the three hostname rules in step when the contract changes.
 
 ## Requirements
 
 - Go 1.25
 - Node.js 22 and npm
 - Docker, for the scanner image and local Worker development
-- A Cloudflare account, Wrangler login, and a configured Containers-enabled zone for deployment
+- A Cloudflare account, Wrangler login, and a Containers-enabled zone for deployment
 
-## Install and verify
+## Setup
 
 Install each JavaScript workspace independently:
 
@@ -39,26 +43,7 @@ npm --prefix frontend ci
 npm --prefix worker ci
 ```
 
-Run the same core checks used by CI:
-
-```sh
-go test -race ./...
-npm --prefix frontend run lint
-npm --prefix frontend test
-npm --prefix frontend run build
-npm --prefix worker run lint
-npm --prefix worker run check
-npm --prefix worker test
-```
-
-The Playwright suite uses mocked API responses, so it does not require a running Worker:
-
-```sh
-cd frontend
-npx playwright install chromium
-npm run build
-npm run test:e2e
-```
+The Go module has no external dependencies, so no download step is needed.
 
 ## Run the components locally
 
@@ -116,13 +101,85 @@ The public API accepts only normalized DNS hostnames. URLs, IP literals, ports, 
 
 Successful scans move through `queued`, `running`, and `complete`. A terminal error produces `failed`. API responses include an `x-correlation-id` header for tracing.
 
+Clients should poll with backoff and give up eventually rather than polling a stuck scan forever; the bundled UI caps both the retry count and the total polling window.
+
+## Testing
+
+Run the same checks CI runs:
+
+```sh
+# Go: race detector, randomised order, coverage
+go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./cmd/... ./internal/...
+go vet ./cmd/... ./internal/...
+
+# Frontend
+npm --prefix frontend run lint
+npm --prefix frontend test
+npm --prefix frontend run build
+
+# Worker
+npm --prefix worker run lint
+npm --prefix worker run check
+npm --prefix worker test
+```
+
+Go package patterns are scoped to `./cmd/...` and `./internal/...` rather than `./...`, because dependency trees under `node_modules` ship their own Go sources and would otherwise be pulled into vet, gofmt, and vulnerability scanning.
+
+Worker tests run inside workerd through `@cloudflare/vitest-pool-workers`, so `SecurityCoordinator` is exercised against real Durable Object storage rather than a stub. They declare their bindings inline and inject their own scanner stub, so the suite never needs the container image.
+
+The Playwright suite uses mocked API responses and does not require a running Worker:
+
+```sh
+cd frontend
+npx playwright install chromium
+npm run build
+npm run test:e2e
+```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every branch push, on pull requests from forks, and on manual dispatch. A pull request opened from a branch in this repository skips its jobs, because the push event already built that exact commit.
+
+| Job | Checks |
+| --- | --- |
+| Go build & tests | gofmt, `go mod tidy` drift, vet, build, race and shuffled tests, statement coverage floor |
+| Go security | govulncheck, gosec, staticcheck |
+| Dockerfile lint | hadolint |
+| Frontend | ESLint, Vitest, typecheck and build, production dependency audit |
+| Frontend end-to-end | Playwright against a production preview |
+| Worker | ESLint, typecheck, workerd tests, dependency audit, Wrangler config dry run |
+| Container image | Docker build and Trivy scan |
+| Secret scan | gitleaks |
+
+The analysis tools are pinned to explicit versions so runs are reproducible and an upstream release cannot enter the pipeline unreviewed; Dependabot raises upgrades as pull requests. Note that govulncheck must stay on a release built with Go 1.25 or newer, as older releases refuse to load this module.
+
+The coverage floor exists to stop erosion, not to certify a target. `cmd/domain-check` is process wiring with no tests of its own, so the aggregate sits well below the tested packages.
+
 ## Security model
 
+Target selection
+
 - DNS answers are checked after resolution; private, loopback, link-local, documentation, carrier-grade NAT, multicast, and other reserved ranges are denied.
-- The scanner always connects to TCP port 443 and does not accept arbitrary upstream URLs or ports.
+- The scanner connects to the exact validated address, always on TCP port 443. Callers cannot choose an upstream, port, redirect destination, or resolver.
+- At most four resolved addresses are attempted, so a hostname with a large address set cannot monopolise a scan slot.
 - TLS 1.2 is the minimum accepted protocol version.
-- Request bodies and identifiers are strictly validated.
-- The Worker enforces per-client, per-target, and global concurrency limits. Repeated anonymous use can require Turnstile.
+
+Resource limits
+
+- DNS resolution, every dial, and every handshake share one deadline derived from `SCAN_TIMEOUT`, so total scan time cannot exceed the configured budget regardless of how many addresses are tried.
+- The container enforces `MAX_CONCURRENT_SCANS` as a single atomic claim, so simultaneous requests cannot overshoot the limit.
+- The Worker enforces per-client, per-target, and global concurrency limits.
+
+Abuse controls
+
+- Repeated anonymous use can require Turnstile. When the verification response reports the hostname the challenge was solved on, it is compared against the host actually serving the request, so a token minted for another property sharing the secret is refused. The verification call carries its own timeout and fails closed if it cannot be reached.
+- Rate-limit buckets are keyed by digest, which bounds the coordinator's stored state and avoids persisting caller addresses or the hostnames people look up.
+- Coordinator state is reclaimed as counter windows lapse, with a backstop cap that logs when it evicts, so the store cannot grow until it exceeds the Durable Object value limit.
+
+Request handling
+
+- Request bodies and identifiers are strictly validated, and bodies are size-capped.
+- The container's internal routes require the gateway header.
 - Test-only address and certificate overrides require `APP_ENV=test`.
 
 DNS rebinding defenses rely on validating the resolved addresses immediately before the scanner connects to one of those exact IPs.
@@ -155,9 +212,8 @@ The Go scanner reads these environment variables:
 | `PORT` | `8080` | HTTP listen port |
 | `DNS_RESOLVER` | system resolver | Optional DNS resolver address |
 | `INTERNAL_GATEWAY` | `cloudflare-worker-v1` | Required internal gateway header value |
-| `SCAN_TIMEOUT` | `12s` | Overall scan timeout |
+| `SCAN_TIMEOUT` | `12s` | Budget covering resolution, dials, and handshakes |
 | `SCAN_RETENTION` | `15m` | In-memory result retention |
 | `MAX_CONCURRENT_SCANS` | `8` | Concurrent scans per container |
 
 Worker bindings and variables are documented in [worker/README.md](worker/README.md).
-

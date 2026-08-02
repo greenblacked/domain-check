@@ -27,7 +27,7 @@ env:
   GO_PACKAGES: ./cmd/... ./internal/...
   # Measured across ./cmd and ./internal. cmd/domain-check is process wiring
   # with no tests of its own and sits at 0%, so the aggregate is well below the
-  # tested packages (internal/scanner 87%, internal/api 67%). Raise this as
+  # tested packages (internal/scanner 87%, internal/api 74%). Raise this as
   # coverage improves; it exists to stop erosion, not to certify a target.
   COVERAGE_FLOOR: '50.0'
 
@@ -147,6 +147,8 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      - name: Formatting
+        run: npm run format
       - name: Unit tests
         run: npm test
       - name: Typecheck & build
@@ -215,6 +217,8 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      - name: Formatting
+        run: npm run format
       - name: Typecheck
         run: npm run check
       - name: Unit tests
