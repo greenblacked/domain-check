@@ -4,7 +4,10 @@ import { APIError, createScan, getScan, type Scan } from './api';
 declare global {
   interface Window {
     turnstile?: {
-      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void; 'error-callback': () => void }) => string;
+      render: (
+        element: HTMLElement,
+        options: { sitekey: string; callback: (token: string) => void; 'error-callback': () => void },
+      ) => string;
       remove: (widget: string) => void;
     };
   }
@@ -91,10 +94,14 @@ function App() {
     <div className="shell">
       <header className="topbar">
         <a className="brand" href="/domain-check" aria-label="Goldenman Tools home">
-          <span className="brand-mark" aria-hidden="true">G</span>
+          <span className="brand-mark" aria-hidden="true">
+            G
+          </span>
           <span>Goldenman Tools</span>
         </a>
-        <span className="secure-note"><span aria-hidden="true">●</span> Edge protected</span>
+        <span className="secure-note">
+          <span aria-hidden="true">●</span> Edge protected
+        </span>
       </header>
 
       <main>
@@ -106,7 +113,9 @@ function App() {
           <form className="scan-form" onSubmit={submit} noValidate>
             <label htmlFor="hostname">Domain hostname</label>
             <div className="input-row">
-              <span className="protocol" aria-hidden="true">https://</span>
+              <span className="protocol" aria-hidden="true">
+                https://
+              </span>
               <input
                 id="hostname"
                 name="hostname"
@@ -123,24 +132,46 @@ function App() {
                 {submitting ? 'Starting…' : 'Run check'}
               </button>
             </div>
-            <p id="hostname-help" className="help">Hostname only. Ports, URLs, IP addresses, and custom resolvers are never accepted.</p>
+            <p id="hostname-help" className="help">
+              Hostname only. Ports, URLs, IP addresses, and custom resolvers are never accepted.
+            </p>
           </form>
 
           {siteKey && <Turnstile siteKey={siteKey} onToken={setTurnstileToken} onError={handleChallengeError} />}
           {turnstileToken && <p className="challenge-ready">Challenge complete. Run the check again.</p>}
-          {error && <div className="error" role="alert"><span aria-hidden="true">!</span><p>{error}</p></div>}
+          {error && (
+            <div className="error" role="alert">
+              <span aria-hidden="true">!</span>
+              <p>{error}</p>
+            </div>
+          )}
         </section>
 
         {scan && <ScanResult scan={scan} abandoned={pollAbandoned} />}
 
         <section className="principles" aria-label="How checks stay safe">
-          <article><span>01</span><h2>Public targets only</h2><p>Private, reserved, loopback, and link-local addresses are rejected after DNS resolution.</p></article>
-          <article><span>02</span><h2>Fixed network scope</h2><p>The scanner uses standard TLS on port 443. Callers cannot choose an upstream or redirect destination.</p></article>
-          <article><span>03</span><h2>Short-lived results</h2><p>Scan state expires after 15 minutes. Reports are not indexed or shared across users.</p></article>
+          <article>
+            <span>01</span>
+            <h2>Public targets only</h2>
+            <p>Private, reserved, loopback, and link-local addresses are rejected after DNS resolution.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h2>Fixed network scope</h2>
+            <p>The scanner uses standard TLS on port 443. Callers cannot choose an upstream or redirect destination.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h2>Short-lived results</h2>
+            <p>Scan state expires after 15 minutes. Reports are not indexed or shared across users.</p>
+          </article>
         </section>
       </main>
 
-      <footer><span>Domain Check</span><span>Read-only public surface analysis</span></footer>
+      <footer>
+        <span>Domain Check</span>
+        <span>Read-only public surface analysis</span>
+      </footer>
     </div>
   );
 }
@@ -161,30 +192,76 @@ function ScanResult({ scan, abandoned }: { scan: Scan; abandoned: boolean }) {
     }
     return (
       <section className="result-card progress-card" aria-live="polite" aria-busy="true">
-        <div className="result-heading"><div><p className="eyebrow">Scan in progress</p><h2>{scan.hostname}</h2></div><span>{scan.progress}%</span></div>
-        <div className="progress-track" role="progressbar" aria-label="Scan progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={scan.progress}><span style={{ width: `${scan.progress}%` }} /></div>
+        <div className="result-heading">
+          <div>
+            <p className="eyebrow">Scan in progress</p>
+            <h2>{scan.hostname}</h2>
+          </div>
+          <span>{scan.progress}%</span>
+        </div>
+        <div
+          className="progress-track"
+          role="progressbar"
+          aria-label="Scan progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={scan.progress}
+        >
+          <span style={{ width: `${scan.progress}%` }} />
+        </div>
         <p>Resolving public addresses and negotiating TLS securely…</p>
       </section>
     );
   }
   if (scan.status === 'failed') {
-    return <section className="result-card" aria-live="polite"><p className="eyebrow">Check stopped safely</p><h2>{scan.hostname}</h2><div className="error inline" role="alert"><span aria-hidden="true">!</span><p>{scan.error || 'The scan could not be completed.'}</p></div></section>;
+    return (
+      <section className="result-card" aria-live="polite">
+        <p className="eyebrow">Check stopped safely</p>
+        <h2>{scan.hostname}</h2>
+        <div className="error inline" role="alert">
+          <span aria-hidden="true">!</span>
+          <p>{scan.error || 'The scan could not be completed.'}</p>
+        </div>
+      </section>
+    );
   }
   if (!scan.report) return null;
   return (
     <section className="result-card" aria-live="polite">
-      <div className="result-heading"><div><p className="eyebrow">Scan complete</p><h2>{scan.hostname}</h2></div><span className="status-pill">Complete</span></div>
+      <div className="result-heading">
+        <div>
+          <p className="eyebrow">Scan complete</p>
+          <h2>{scan.hostname}</h2>
+        </div>
+        <span className="status-pill">Complete</span>
+      </div>
       <dl className="summary-grid">
-        <div><dt>Addresses</dt><dd>{scan.report.resolved_ips.join(', ')}</dd></div>
-        <div><dt>TLS</dt><dd>{scan.report.tls.version}</dd></div>
-        <div><dt>Certificate</dt><dd>{scan.report.tls.days_remaining} days remaining</dd></div>
+        <div>
+          <dt>Addresses</dt>
+          <dd>{scan.report.resolved_ips.join(', ')}</dd>
+        </div>
+        <div>
+          <dt>TLS</dt>
+          <dd>{scan.report.tls.version}</dd>
+        </div>
+        <div>
+          <dt>Certificate</dt>
+          <dd>{scan.report.tls.days_remaining} days remaining</dd>
+        </div>
       </dl>
       <div className="findings">
         <h3>Findings</h3>
         {scan.report.findings.map((finding) => (
           <details key={finding.code}>
-            <summary><span className={`severity ${finding.severity}`}>{finding.severity}</span><strong>{finding.title}</strong><span className="expand">Evidence</span></summary>
-            <div className="evidence"><code>{finding.code}</code><p>{finding.evidence}</p></div>
+            <summary>
+              <span className={`severity ${finding.severity}`}>{finding.severity}</span>
+              <strong>{finding.title}</strong>
+              <span className="expand">Evidence</span>
+            </summary>
+            <div className="evidence">
+              <code>{finding.code}</code>
+              <p>{finding.evidence}</p>
+            </div>
           </details>
         ))}
       </div>
@@ -198,7 +275,8 @@ function Turnstile({ siteKey, onToken, onError }: { siteKey: string; onToken: (t
   useEffect(() => {
     let widget = '';
     const render = () => {
-      if (target.current && window.turnstile) widget = window.turnstile.render(target.current, { sitekey: siteKey, callback: onToken, 'error-callback': onError });
+      if (target.current && window.turnstile)
+        widget = window.turnstile.render(target.current, { sitekey: siteKey, callback: onToken, 'error-callback': onError });
     };
     let script = document.querySelector<HTMLScriptElement>('script[data-turnstile]');
     if (!script) {
@@ -209,10 +287,18 @@ function Turnstile({ siteKey, onToken, onError }: { siteKey: string; onToken: (t
       script.dataset.turnstile = 'true';
       document.head.appendChild(script);
     }
-    if (window.turnstile) render(); else script.addEventListener('load', render, { once: true });
-    return () => { if (widget && window.turnstile) window.turnstile.remove(widget); };
+    if (window.turnstile) render();
+    else script.addEventListener('load', render, { once: true });
+    return () => {
+      if (widget && window.turnstile) window.turnstile.remove(widget);
+    };
   }, [siteKey, onToken, onError]);
-  return <div className="challenge"><p>One quick security check is required after repeated anonymous use.</p><div ref={target} /></div>;
+  return (
+    <div className="challenge">
+      <p>One quick security check is required after repeated anonymous use.</p>
+      <div ref={target} />
+    </div>
+  );
 }
 
 function messageFor(reason: unknown): string {
@@ -221,4 +307,3 @@ function messageFor(reason: unknown): string {
 }
 
 export default App;
-

@@ -20,4 +20,3 @@ describe('shardFor', () => {
     expect(shardFor(id, 3)).toBeLessThan(3);
   });
 });
-

@@ -159,12 +159,18 @@ export class SecurityCoordinator extends DurableObject<Env> {
     const client = updateCounter(state.clients[input.client], now, RATE_WINDOW_MS, false);
     if (client.count >= CLIENT_LIMIT) {
       await persistCollected();
-      return Response.json({ allowed: false, code: 'client_rate_limit', retry_after: retryAfter(client, now, RATE_WINDOW_MS) }, { status: 429 });
+      return Response.json(
+        { allowed: false, code: 'client_rate_limit', retry_after: retryAfter(client, now, RATE_WINDOW_MS) },
+        { status: 429 },
+      );
     }
     const target = updateCounter(state.targets[input.target], now, RATE_WINDOW_MS, false);
     if (target.count >= TARGET_LIMIT) {
       await persistCollected();
-      return Response.json({ allowed: false, code: 'target_rate_limit', retry_after: retryAfter(target, now, RATE_WINDOW_MS) }, { status: 429 });
+      return Response.json(
+        { allowed: false, code: 'target_rate_limit', retry_after: retryAfter(target, now, RATE_WINDOW_MS) },
+        { status: 429 },
+      );
     }
     if (Object.keys(state.active).length >= MAX_ACTIVE_SCANS) {
       await persistCollected();
@@ -316,10 +322,19 @@ async function createScan(request: Request, env: Env, correlationID: string): Pr
     return apiResponse({ error: { code: 'unsupported_media_type', message: 'Content-Type must be application/json' } }, 415, correlationID);
   }
   const input = await parsePublicRequest(request);
-  if (!input) return apiResponse({ error: { code: 'invalid_request', message: 'Expected a small JSON body containing only hostname and optional turnstile_token' } }, 400, correlationID);
+  if (!input)
+    return apiResponse(
+      { error: { code: 'invalid_request', message: 'Expected a small JSON body containing only hostname and optional turnstile_token' } },
+      400,
+      correlationID,
+    );
   const hostname = normalizeHostname(input.hostname);
   if (!hostname) {
-    return apiResponse({ error: { code: 'invalid_hostname', message: 'Enter a normalized DNS hostname without a URL, IP address, or port' } }, 400, correlationID);
+    return apiResponse(
+      { error: { code: 'invalid_hostname', message: 'Enter a normalized DNS hostname without a URL, IP address, or port' } },
+      400,
+      correlationID,
+    );
   }
 
   const scanID = crypto.randomUUID();
@@ -336,9 +351,20 @@ async function createScan(request: Request, env: Env, correlationID: string): Pr
     const headers: HeadersInit = {};
     if (decision.retry_after) headers['retry-after'] = String(decision.retry_after);
     if (decision.code === 'turnstile_required') {
-      return apiResponse({ error: { code: decision.code, message: 'Complete the abuse-protection challenge to continue', site_key: env.TURNSTILE_SITE_KEY } }, 403, correlationID);
+      return apiResponse(
+        {
+          error: { code: decision.code, message: 'Complete the abuse-protection challenge to continue', site_key: env.TURNSTILE_SITE_KEY },
+        },
+        403,
+        correlationID,
+      );
     }
-    return apiResponse({ error: { code: decision.code ?? 'rate_limited', message: 'Scan limit reached; retry later' } }, reservation.status, correlationID, headers);
+    return apiResponse(
+      { error: { code: decision.code ?? 'rate_limited', message: 'Scan limit reached; retry later' } },
+      reservation.status,
+      correlationID,
+      headers,
+    );
   }
 
   const internal = new Request('http://scanner/internal/v1/scans', {
@@ -352,16 +378,26 @@ async function createScan(request: Request, env: Env, correlationID: string): Pr
     return withPublicHeaders(response, correlationID);
   } catch (error) {
     await release(env, scanID);
-    console.error(JSON.stringify({ event: 'container_request_failed', correlation_id: correlationID, scan_id: scanID, error: String(error) }));
-    return apiResponse({ error: { code: 'scanner_unavailable', message: 'Scanner is starting or unavailable; retry shortly' } }, 503, correlationID, { 'retry-after': '10' });
+    console.error(
+      JSON.stringify({ event: 'container_request_failed', correlation_id: correlationID, scan_id: scanID, error: String(error) }),
+    );
+    return apiResponse(
+      { error: { code: 'scanner_unavailable', message: 'Scanner is starting or unavailable; retry shortly' } },
+      503,
+      correlationID,
+      { 'retry-after': '10' },
+    );
   }
 }
 
 async function getScan(env: Env, scanID: string, correlationID: string): Promise<Response> {
-  if (!uuidPattern.test(scanID)) return apiResponse({ error: { code: 'invalid_scan_id', message: 'Invalid scan identifier' } }, 400, correlationID);
+  if (!uuidPattern.test(scanID))
+    return apiResponse({ error: { code: 'invalid_scan_id', message: 'Invalid scan identifier' } }, 400, correlationID);
   try {
     const response = await containerStub(env, scanID).fetch(
-      new Request(`http://scanner/internal/v1/scans/${scanID}`, { headers: { 'x-internal-gateway': 'cloudflare-worker-v1', 'x-correlation-id': correlationID } }),
+      new Request(`http://scanner/internal/v1/scans/${scanID}`, {
+        headers: { 'x-internal-gateway': 'cloudflare-worker-v1', 'x-correlation-id': correlationID },
+      }),
     );
     if (response.ok) {
       const clone = response.clone();
@@ -371,7 +407,9 @@ async function getScan(env: Env, scanID: string, correlationID: string): Promise
     return withPublicHeaders(response, correlationID);
   } catch (error) {
     console.error(JSON.stringify({ event: 'container_poll_failed', correlation_id: correlationID, scan_id: scanID, error: String(error) }));
-    return apiResponse({ error: { code: 'scanner_unavailable', message: 'Scanner is unavailable; retry shortly' } }, 503, correlationID, { 'retry-after': '10' });
+    return apiResponse({ error: { code: 'scanner_unavailable', message: 'Scanner is unavailable; retry shortly' } }, 503, correlationID, {
+      'retry-after': '10',
+    });
   }
 }
 
@@ -396,7 +434,15 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const correlationID = request.headers.get('cf-ray') ?? crypto.randomUUID();
-    console.log(JSON.stringify({ event: 'request', method: request.method, path: url.pathname, correlation_id: correlationID, release_sha: env.RELEASE_SHA }));
+    console.log(
+      JSON.stringify({
+        event: 'request',
+        method: request.method,
+        path: url.pathname,
+        correlation_id: correlationID,
+        release_sha: env.RELEASE_SHA,
+      }),
+    );
 
     if (request.method === 'GET' && (url.pathname === '/health' || url.pathname === '/ready')) {
       return health(env, url.pathname, correlationID);
@@ -409,17 +455,21 @@ export default {
     }
     if (url.pathname === '/') return Response.redirect(new URL('/domain-check', url), 302);
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return apiResponse({ error: { code: 'method_not_allowed', message: 'Method not allowed' } }, 405, correlationID, { allow: 'GET, HEAD' });
+      return apiResponse({ error: { code: 'method_not_allowed', message: 'Method not allowed' } }, 405, correlationID, {
+        allow: 'GET, HEAD',
+      });
     }
     const assetResponse = await env.ASSETS.fetch(request);
     const headers = new Headers(assetResponse.headers);
     headers.set('x-content-type-options', 'nosniff');
     headers.set('referrer-policy', 'strict-origin-when-cross-origin');
     headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=()');
-    headers.set('content-security-policy', "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    headers.set(
+      'content-security-policy',
+      "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    );
     if (headers.get('content-type')?.includes('text/html')) headers.set('cache-control', 'no-cache');
     else headers.set('cache-control', 'public, max-age=31536000, immutable');
     return new Response(assetResponse.body, { status: assetResponse.status, statusText: assetResponse.statusText, headers });
   },
 } satisfies ExportedHandler<Env>;
-

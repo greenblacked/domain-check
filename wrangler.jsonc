@@ -8,49 +8,49 @@
   "routes": [
     {
       "pattern": "tools.goldenman.cloud/*",
-      "zone_name": "goldenman.cloud"
-    }
+      "zone_name": "goldenman.cloud",
+    },
   ],
   "assets": {
     "directory": "./frontend/dist",
     "binding": "ASSETS",
     "run_worker_first": ["/api/*", "/health", "/ready", "/domain-check"],
     "not_found_handling": "single-page-application",
-    "html_handling": "none"
+    "html_handling": "none",
   },
   "containers": [
     {
       "class_name": "ScannerContainer",
       "image": "./Dockerfile",
       "instance_type": "basic",
-      "max_instances": 3
-    }
+      "max_instances": 3,
+    },
   ],
   "durable_objects": {
     "bindings": [
       { "name": "SCANNER", "class_name": "ScannerContainer" },
-      { "name": "SECURITY", "class_name": "SecurityCoordinator" }
-    ]
+      { "name": "SECURITY", "class_name": "SecurityCoordinator" },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ScannerContainer", "SecurityCoordinator"]
-    }
+      "new_sqlite_classes": ["ScannerContainer", "SecurityCoordinator"],
+    },
   ],
   "vars": {
     "APP_ENV": "production",
     "CONTAINER_SHARDS": "3",
     "TURNSTILE_ENABLED": "true",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAA_REPLACE_WITH_PRODUCTION_SITE_KEY",
-    "RELEASE_SHA": "local"
+    "RELEASE_SHA": "local",
   },
   "secrets": {
-    "required": ["TURNSTILE_SECRET_KEY"]
+    "required": ["TURNSTILE_SECRET_KEY"],
   },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
   },
   "env": {
     "staging": {
@@ -61,43 +61,42 @@
         "binding": "ASSETS",
         "run_worker_first": ["/api/*", "/health", "/ready", "/domain-check"],
         "not_found_handling": "single-page-application",
-        "html_handling": "none"
+        "html_handling": "none",
       },
       "containers": [
         {
           "class_name": "ScannerContainer",
           "image": "./Dockerfile",
           "instance_type": "lite",
-          "max_instances": 1
-        }
+          "max_instances": 1,
+        },
       ],
       "durable_objects": {
         "bindings": [
           { "name": "SCANNER", "class_name": "ScannerContainer" },
-          { "name": "SECURITY", "class_name": "SecurityCoordinator" }
-        ]
+          { "name": "SECURITY", "class_name": "SecurityCoordinator" },
+        ],
       },
       "migrations": [
         {
           "tag": "v1",
-          "new_sqlite_classes": ["ScannerContainer", "SecurityCoordinator"]
-        }
+          "new_sqlite_classes": ["ScannerContainer", "SecurityCoordinator"],
+        },
       ],
       "vars": {
         "APP_ENV": "staging",
         "CONTAINER_SHARDS": "1",
         "TURNSTILE_ENABLED": "true",
         "TURNSTILE_SITE_KEY": "0x4AAAAAAA_REPLACE_WITH_STAGING_SITE_KEY",
-        "RELEASE_SHA": "local"
+        "RELEASE_SHA": "local",
       },
       "secrets": {
-        "required": ["TURNSTILE_SECRET_KEY"]
+        "required": ["TURNSTILE_SECRET_KEY"],
       },
       "observability": {
         "enabled": true,
-        "head_sampling_rate": 1
-      }
-    }
-  }
+        "head_sampling_rate": 1,
+      },
+    },
+  },
 }
-
