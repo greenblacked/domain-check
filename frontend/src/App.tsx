@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { APIError, createScan, getScan, type Scan } from './api';
 
 declare global {
@@ -54,6 +54,12 @@ function App() {
     }, delay);
     return () => window.clearTimeout(timer);
   }, [scan, pollFailures, pollAbandoned]);
+
+  // Stable across renders: the challenge effect depends on these, and inline
+  // closures made it tear the widget down and re-render it on every keystroke.
+  const handleChallengeError = useCallback(() => {
+    setError('The security challenge could not load. Please refresh and try again.');
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,7 +126,7 @@ function App() {
             <p id="hostname-help" className="help">Hostname only. Ports, URLs, IP addresses, and custom resolvers are never accepted.</p>
           </form>
 
-          {siteKey && <Turnstile siteKey={siteKey} onToken={setTurnstileToken} onError={() => setError('The security challenge could not load. Please refresh and try again.')} />}
+          {siteKey && <Turnstile siteKey={siteKey} onToken={setTurnstileToken} onError={handleChallengeError} />}
           {turnstileToken && <p className="challenge-ready">Challenge complete. Run the check again.</p>}
           {error && <div className="error" role="alert"><span aria-hidden="true">!</span><p>{error}</p></div>}
         </section>

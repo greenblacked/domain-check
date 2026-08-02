@@ -318,7 +318,7 @@ async function createScan(request: Request, env: Env, correlationID: string): Pr
   const input = await parsePublicRequest(request);
   if (!input) return apiResponse({ error: { code: 'invalid_request', message: 'Expected a small JSON body containing only hostname and optional turnstile_token' } }, 400, correlationID);
   const hostname = normalizeHostname(input.hostname);
-  if (!hostname || hostname !== input.hostname.trim().toLowerCase().replace(/\.$/, '')) {
+  if (!hostname) {
     return apiResponse({ error: { code: 'invalid_hostname', message: 'Enter a normalized DNS hostname without a URL, IP address, or port' } }, 400, correlationID);
   }
 
