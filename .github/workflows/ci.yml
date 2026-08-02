@@ -12,8 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  # head_ref groups a pull request with its branch so a superseded run is
-  # cancelled instead of racing the new one.
+  # One in-flight run per branch: pushing again cancels the run it supersedes.
   group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
@@ -35,6 +34,11 @@ env:
 jobs:
   go:
     name: Go build & tests
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +85,11 @@ jobs:
 
   go-security:
     name: Go security (govulncheck, gosec, staticcheck)
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +112,11 @@ jobs:
 
   dockerfile:
     name: Dockerfile lint (hadolint)
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,6 +127,11 @@ jobs:
 
   frontend:
     name: Frontend lint, tests & build
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -142,6 +161,11 @@ jobs:
 
   frontend-e2e:
     name: Frontend end-to-end (Playwright)
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -170,6 +194,11 @@ jobs:
 
   worker:
     name: Worker lint, tests & config validation
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     needs: frontend
     defaults:
@@ -201,6 +230,11 @@ jobs:
 
   container-image:
     name: Container image build & scan
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -217,6 +251,11 @@ jobs:
 
   secret-scan:
     name: Secret scan (gitleaks)
+    # A same-repo pull request already had its head validated by the push
+    # event, so only fork pull requests need the duplicate run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
