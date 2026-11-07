@@ -134,7 +134,7 @@ describe('POST /api/v1/scans', () => {
     expect(body.correlation_id).toBe(forwarded.correlation);
   });
 
-  it.each([' Example.COM ', 'EXAMPLE.com.', 'example.com.'])('normalizes %j before dispatch', async (hostname) => {
+  it.each([' Example.COM ', 'EXAMPLE.com.', 'example.com.', '  EXAMPLE.COM.  '])('normalizes %j before dispatch', async (hostname) => {
     // The Worker normalizes; the container then refuses anything that is not
     // already normalized, so the two layers must agree on the canonical form.
     const response = await call(post({ hostname }));
