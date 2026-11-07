@@ -98,10 +98,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(w, r) {
 		return
 	}
-	if h.active.Load() >= int64(h.config.MaxConcurrent) {
-		writeError(w, http.StatusTooManyRequests, "concurrency_limit", "scanner is at capacity")
-		return
-	}
 	body := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	decoder := json.NewDecoder(body)
 	decoder.DisallowUnknownFields()
@@ -119,19 +115,44 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_hostname", "hostname must already be normalized")
 		return
 	}
+	if !h.acquire() {
+		writeError(w, http.StatusTooManyRequests, "concurrency_limit", "scanner is at capacity")
+		return
+	}
 	now := time.Now().UTC()
 	item := &Scan{ID: input.ScanID, Hostname: host, CorrelationID: input.CorrelationID, Status: "queued", Progress: 5, CreatedAt: now}
 	if _, loaded := h.scans.LoadOrStore(item.ID, item); loaded {
+		h.release()
 		writeError(w, http.StatusConflict, "duplicate_scan", "scan identifier already exists")
 		return
 	}
-	h.active.Add(1)
 	go h.execute(item)
 	writeJSON(w, http.StatusAccepted, item.snapshot())
 }
 
+// acquire claims one of the MaxConcurrent scan slots. Reading the counter and
+// then incrementing it as separate steps let simultaneous requests all observe
+// spare capacity and overshoot the limit, so the claim is a single atomic step
+// that retries only when another request won the race.
+func (h *Handler) acquire() bool {
+	limit := int64(h.config.MaxConcurrent)
+	for {
+		current := h.active.Load()
+		if current >= limit {
+			return false
+		}
+		if h.active.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
+func (h *Handler) release() {
+	h.active.Add(-1)
+}
+
 func (h *Handler) execute(item *Scan) {
-	defer h.active.Add(-1)
+	defer h.release()
 	item.update("running", 25, nil, "")
 	report, err := h.scanner.Scan(context.Background(), item.Hostname)
 	if err != nil {
