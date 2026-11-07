@@ -48,8 +48,10 @@ export class APIError extends Error {
 async function decode(response: Response): Promise<Scan> {
   const body = (await response.json()) as Scan & { error?: { code: string; message: string; site_key?: string } };
   if (!response.ok) {
+    // `typeof null` is also 'object', so a body of {"error": null} used to pass
+    // this check and then throw a TypeError on the next line.
     const issue: { code: string; message: string; site_key?: string } =
-      typeof body.error === 'object'
+      body.error && typeof body.error === 'object'
         ? body.error
         : { code: 'request_failed', message: 'The request could not be completed.' };
     throw new APIError(issue.code, issue.message, issue.site_key);
