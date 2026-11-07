@@ -170,3 +170,51 @@ describe('polling', () => {
     expect(screen.getByText(/security check is required/i)).toBeInTheDocument();
   });
 });
+
+describe('error decoding', () => {
+  it('reports a generic failure when the error body is null', async () => {
+    // Regression: `typeof null` is 'object', so this body passed the shape
+    // check and then threw a TypeError while reading .code off null.
+    stubFetch(() => ok({ error: null }, 500));
+    startScan();
+    await advance(0);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The request could not be completed.');
+  });
+
+  it.each([
+    ['a missing error field', {}],
+    ['a string error field', { error: 'boom' }],
+  ])('reports a generic failure for %s', async (_label, body) => {
+    stubFetch(() => ok(body, 500));
+    startScan();
+    await advance(0);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The request could not be completed.');
+  });
+});
+
+describe('challenge widget', () => {
+  const renderWidget = vi.fn(() => 'widget-1');
+
+  beforeEach(() => {
+    renderWidget.mockClear();
+    vi.stubGlobal('turnstile', { render: renderWidget, remove: vi.fn() });
+  });
+
+  it('renders the challenge once and keeps it across unrelated re-renders', async () => {
+    // Regression: onError was an inline closure, so it changed identity on
+    // every render and the effect tore the widget down and rebuilt it.
+    stubFetch(() => ok({ error: { code: 'turnstile_required', message: 'Challenge', site_key: 'sk' } }, 403));
+    startScan();
+    await advance(0);
+    expect(renderWidget).toHaveBeenCalledTimes(1);
+
+    // Typing re-renders App; the widget must survive untouched.
+    fireEvent.change(screen.getByLabelText('Domain hostname'), { target: { value: 'example.org' } });
+    fireEvent.change(screen.getByLabelText('Domain hostname'), { target: { value: 'example.net' } });
+    await advance(0);
+
+    expect(renderWidget).toHaveBeenCalledTimes(1);
+  });
+});

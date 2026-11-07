@@ -17,15 +17,15 @@ The production application is served at `/domain-check`, while the Vite build us
 
 ## Commands
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Start the Vite development server |
-| `npm run build` | Type-check and create `dist/` assets |
-| `npm run preview` | Preview the production build on port 4173 |
-| `npm run lint` | Run ESLint |
-| `npm run format` | Check formatting with Prettier |
-| `npm test` | Run Vitest component tests once |
-| `npm run test:e2e` | Run the Playwright browser tests |
+| Command             | Purpose                                        |
+| ------------------- | ---------------------------------------------- |
+| `npm run dev`       | Start the Vite development server              |
+| `npm run build`     | Type-check and create `dist/` assets           |
+| `npm run preview`   | Preview the production build on port 4173      |
+| `npm run lint`      | Run ESLint                                     |
+| `npm run format`    | Check formatting with Prettier                 |
+| `npm test`          | Run Vitest component tests once                |
+| `npm run test:e2e`  | Run the Playwright browser tests               |
 | `npm run typecheck` | Check the browser and Vite TypeScript projects |
 
 ## Tests
@@ -53,4 +53,3 @@ npm run test:e2e
 - `e2e/domain-check.spec.ts` covers the browser workflow and keyboard-accessible evidence details.
 
 The UI intentionally accepts hostname input only. Keep its normalization rules aligned with `normalizeHostname` in the Worker and Go scanner when the contract changes.
-
